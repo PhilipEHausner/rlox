@@ -1,3 +1,5 @@
+mod error_handling;
+
 use clap::Parser;
 
 #[derive(clap::Parser, Debug)]
@@ -11,4 +13,9 @@ struct Args {
 fn main() {
     let args = Args::parse();
     println!("Hello World!");
+    let file = read_file(args.file.as_str());
+}
+
+fn read_file(file: &str) -> String {
+    std::fs::read_to_string(file).expect("Input file could not be read.")
 }
