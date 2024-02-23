@@ -12,10 +12,16 @@ impl<'a> CharStream<'a> {
         self.position = 0;
     }
 
+    // Consume the next char. Return None if stream has ended.
     pub fn next(&mut self) -> Option<char> {
         let result = self.current_char();
         self.position += 1;
         result
+    }
+
+    // Revert the last consumed char, s.t. it can be consumed again.
+    pub fn revert(&mut self) {
+        self.position -= 1;
     }
 
     pub fn peek(&self) -> Option<char> {

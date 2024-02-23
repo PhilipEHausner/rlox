@@ -121,11 +121,16 @@ impl<'a> Scanner<'a> {
                 ';' => self.create_token(TokenType::Semicolon),
                 '*' => self.create_token(TokenType::Star),
                 // Single or two character tokens.
-                '/' => match self.char_stream.peek() {
+                '/' => match self.char_stream.current_char() {
                     None => self.create_token(TokenType::Slash),
                     Some(x) => match x {
                         '/' => {
                             self.process_comment();
+                            Ok(None)
+                        }
+                        '*' => {
+                            self.char_stream.next();
+                            self.process_multiline_comment();
                             Ok(None)
                         }
                         _ => self.create_token(TokenType::Slash),
@@ -153,7 +158,7 @@ impl<'a> Scanner<'a> {
                 '"' => self.process_string(),
                 // Character is invalid.
                 _ => {
-                    if !matches!(c, '0'..='9') {
+                    if matches!(c, '0'..='9') {
                         self.process_number(c)
                     } else if self.is_valid_id_start(&c) {
                         self.process_identifier(c)
@@ -175,6 +180,26 @@ impl<'a> Scanner<'a> {
         }
     }
 
+    fn process_multiline_comment(&mut self) {
+        while let Some(c1) = self.char_stream.next() {
+            if c1 != '*' {
+                continue;
+            }
+            match self.char_stream.current_char() {
+                None => {}
+                Some(c2) => {
+                    if c2 == '/' {
+                        self.char_stream.next();
+                        return;
+                    }
+                }
+            }
+        }
+
+        self.char_stream.revert();
+        self.process_error("Unterminated multiline comment.");
+    }
+
     fn process_string(&mut self) -> Result<Option<Token>, ScannerError> {
         let mut s = "".to_string();
         let result;
@@ -183,6 +208,7 @@ impl<'a> Scanner<'a> {
             let r = self.char_stream.next();
             match r {
                 None => {
+                    self.char_stream.revert();
                     self.process_error("Unterminated string.");
                     result = Ok(None);
                     break;
@@ -300,5 +326,190 @@ impl<'a> Scanner<'a> {
         self.error_handler
             .report_error(error_msg, &self.get_line_information());
         self.had_error = true;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn simulate_scan_input(input: &str) -> Result<Vec<TokenType>, ScannerError> {
+        let error_handler = ErrorHandler::new(input);
+        let tokens = scan(&input, &error_handler)?;
+        Ok(tokens
+            .iter()
+            .map(|token| token.token_type().clone())
+            .collect())
+    }
+
+    #[test]
+    fn test_function_block() {
+        let input = "fun myFunction(a: int): string {\nreturn \"result\"\n}".to_string();
+
+        let result = simulate_scan_input(&input).unwrap();
+
+        assert_eq!(
+            result,
+            vec![
+                TokenType::Fun,
+                TokenType::Identifier("myFunction".to_string()),
+                TokenType::LeftParenthesis,
+                TokenType::Identifier("a".to_string()),
+                TokenType::Colon,
+                TokenType::Int,
+                TokenType::RightParenthesis,
+                TokenType::Colon,
+                TokenType::String,
+                TokenType::LeftBrace,
+                TokenType::Return,
+                TokenType::StringValue("result".to_string()),
+                TokenType::RightBrace,
+                TokenType::EOF,
+            ]
+        )
+    }
+
+    #[test]
+    fn test_single_token_types() {
+        let input = "+ - * / ( ) { } , ; : = ! == < <= > >=".to_string();
+        let expected_tokens = vec![
+            TokenType::Plus,
+            TokenType::Minus,
+            TokenType::Star,
+            TokenType::Slash,
+            TokenType::LeftParenthesis,
+            TokenType::RightParenthesis,
+            TokenType::LeftBrace,
+            TokenType::RightBrace,
+            TokenType::Comma,
+            TokenType::Semicolon,
+            TokenType::Colon,
+            TokenType::Equal,
+            TokenType::Bang,
+            TokenType::EqualEqual,
+            TokenType::Less,
+            TokenType::LessEqual,
+            TokenType::Greater,
+            TokenType::GreaterEqual,
+            TokenType::EOF,
+        ];
+        assert_eq!(simulate_scan_input(&input).unwrap(), expected_tokens);
+    }
+
+    #[test]
+    fn test_two_character_tokens() {
+        let input = "!= == <= >=".to_string();
+        let expected_tokens = vec![
+            TokenType::BangEqual,
+            TokenType::EqualEqual,
+            TokenType::LessEqual,
+            TokenType::GreaterEqual,
+            TokenType::EOF,
+        ];
+        assert_eq!(simulate_scan_input(&input).unwrap(), expected_tokens);
+    }
+
+    #[test]
+    fn test_identifiers_and_keywords() {
+        let input = "class MyClass fun myFunction if else true false var x".to_string();
+        let expected_tokens = vec![
+            TokenType::Class,
+            TokenType::Identifier("MyClass".to_string()),
+            TokenType::Fun,
+            TokenType::Identifier("myFunction".to_string()),
+            TokenType::If,
+            TokenType::Else,
+            TokenType::True,
+            TokenType::False,
+            TokenType::Var,
+            TokenType::Identifier("x".to_string()),
+            TokenType::EOF,
+        ];
+        assert_eq!(simulate_scan_input(&input).unwrap(), expected_tokens);
+    }
+
+    #[test]
+    fn test_integers_and_floats() {
+        let input = "123 45.67 0 -987.65".to_string();
+        let expected_tokens = vec![
+            TokenType::IntegerValue(123),
+            TokenType::FloatValue(45.67),
+            TokenType::IntegerValue(0),
+            TokenType::Minus,
+            TokenType::FloatValue(987.65),
+            TokenType::EOF,
+        ];
+        assert_eq!(simulate_scan_input(&input).unwrap(), expected_tokens);
+    }
+
+    #[test]
+    fn test_strings() {
+        let input = "\"hello\" \"world\" \"123\"".to_string();
+        let expected_tokens = vec![
+            TokenType::StringValue("hello".to_string()),
+            TokenType::StringValue("world".to_string()),
+            TokenType::StringValue("123".to_string()),
+            TokenType::EOF,
+        ];
+        assert_eq!(simulate_scan_input(&input).unwrap(), expected_tokens);
+    }
+
+    #[test]
+    fn test_comments() {
+        let input = "// This is a comment".to_string();
+        let expected_tokens = vec![TokenType::EOF];
+        assert_eq!(simulate_scan_input(&input).unwrap(), expected_tokens);
+    }
+
+    #[test]
+    fn test_multiline_comment() {
+        let input = "/* This is a comment\n This is the second line */".to_string();
+        let expected_tokens = vec![TokenType::EOF];
+        assert_eq!(simulate_scan_input(&input).unwrap(), expected_tokens);
+    }
+
+    #[test]
+    fn test_error_handling_invalid_characters() {
+        let input = "$ %".to_string();
+        let error_handler = ErrorHandler::new(&input);
+        let res = scan(&input, &error_handler);
+        assert!(res.is_err());
+    }
+
+    #[test]
+    fn test_error_handling_unterminated_strings() {
+        let input = "\"unterminated string".to_string();
+        assert!(simulate_scan_input(&input).is_err());
+    }
+
+    #[test]
+    fn test_complex_scenarios() {
+        let input =
+            "if (x == 1) { print(\"x is 1\"); } else { print(\"x is not 1\"); }".to_string();
+        let expected_tokens = vec![
+            TokenType::If,
+            TokenType::LeftParenthesis,
+            TokenType::Identifier("x".to_string()),
+            TokenType::EqualEqual,
+            TokenType::IntegerValue(1),
+            TokenType::RightParenthesis,
+            TokenType::LeftBrace,
+            TokenType::Print,
+            TokenType::LeftParenthesis,
+            TokenType::StringValue("x is 1".to_string()),
+            TokenType::RightParenthesis,
+            TokenType::Semicolon,
+            TokenType::RightBrace,
+            TokenType::Else,
+            TokenType::LeftBrace,
+            TokenType::Print,
+            TokenType::LeftParenthesis,
+            TokenType::StringValue("x is not 1".to_string()),
+            TokenType::RightParenthesis,
+            TokenType::Semicolon,
+            TokenType::RightBrace,
+            TokenType::EOF,
+        ];
+        assert_eq!(simulate_scan_input(&input).unwrap(), expected_tokens);
     }
 }

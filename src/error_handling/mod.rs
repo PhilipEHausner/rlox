@@ -13,7 +13,6 @@ impl LineInformation {
 }
 
 pub struct ErrorHandler {
-    pub had_error: bool,
     code: String,
 }
 
@@ -27,10 +26,9 @@ impl ErrorHandler {
         Ok(())
     }
 
-    pub fn new(code: &String) -> ErrorHandler {
+    pub fn new(code: &str) -> ErrorHandler {
         ErrorHandler {
-            had_error: false,
-            code: code.clone(),
+            code: code.to_string().clone(),
         }
     }
 
