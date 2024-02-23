@@ -1,6 +1,8 @@
 mod error_handling;
+mod frontend;
 
 use crate::error_handling::ErrorHandler;
+use crate::frontend::scanner::{scan, TokenType};
 use clap::Parser;
 
 #[derive(clap::Parser, Debug)]
@@ -13,9 +15,21 @@ struct Args {
 
 fn main() {
     let args = Args::parse();
-    println!("Hello World!");
     let file = read_file(args.file.as_str());
     ErrorHandler::init_logging().expect("Logging could not be setup.");
+
+    let error_handler = ErrorHandler::new(&file);
+    let tokens = scan(&file, &error_handler).unwrap();
+
+    for token in tokens.iter() {
+        if token.token_type() == &TokenType::EOF {
+            continue;
+        }
+        error_handler.report_error(
+            &format!("{:?}", &token.token_type()),
+            token.line_information(),
+        );
+    }
 }
 
 fn read_file(file: &str) -> String {
